@@ -2,90 +2,127 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>AI全自动成片工具｜带完整日志</title>
+  <title>Storybound AI全自动成片</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
   <script src="https://unpkg.com/element-plus"></script>
   <link rel="stylesheet" href="/css/style.css">
   <style>
-    .step-finish{background:#52c41a;width:16px;height:16px;border-radius:50%}
-    .step-running{background:#faad14;width:16px;height:16px;border-radius:50%}
-    .step-wait{background:#999;width:16px;height:16px;border-radius:50%}
-    .step-item{display:flex;align-items:center;gap:12px;margin:10px 0}
-    .log-box{background:#1e1e1e;color:#dcdcdc;padding:15px;border-radius:6px;height:480px;overflow-y:auto;white-space:pre-wrap;font-size:12px;line-height:1.5}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#12141a;color:#e5e7eb;font-size:14px}
+    #app{display:grid;grid-template-columns:220px 320px 1fr;height:100vh}
+    /* 左侧边栏 */
+    .left-side{background:#191b23;padding:16px}
+    .new-task-main{background:#23a55a;color:#fff;border:0;border-radius:4px;width:100%;padding:9px 0;margin-bottom:16px;cursor:pointer;font-size:14px}
+    .task-list-item{padding:10px 8px;margin:6px 0;border-radius:4px;cursor:pointer}
+    .task-list-item.active{background:#272a37}
+    .task-name{font-size:14px}
+    .task-sub{font-size:12px;color:#888;margin-top:3px}
+    /* 中间任务面板 */
+    .mid-wrap{background:#161820;padding:18px;border-right:1px solid #22252f}
+    .task-top-info{margin-bottom:20px}
+    .task-title{font-size:18px;margin-bottom:8px}
+    .num-row{display:flex;gap:20px;color:#aaa;margin:8px 0}
+    .step-wrap{margin-top:24px}
+    .step-item{display:flex;align-items:center;gap:12px;margin:14px 0}
+    .step-dot{width:16px;height:16px;border-radius:50%}
+    .step-finish{background:#36c965}
+    .step-running{background:#f5b841}
+    .step-wait{background:#444855}
+    .step-text{}
+    .step-desc{font-size:12px;color:#888}
+    .opt-btn{margin-top:12px;display:flex;gap:10px}
+    /* 右侧预览面板 */
+    .right-wrap{padding:16px}
+    .tab-header{display:flex;gap:24px;border-bottom:1px solid #22252f;padding-bottom:10px;margin-bottom:12px}
+    .tab-item{cursor:pointer;color:#888}
+    .tab-item.active{color:#58a6ff;border-bottom:2px solid #58a6ff;padding-bottom:10px}
+    .content-text{line-height:1.7;color:#d1d3d9;white-space:pre-wrap}
+    .log-box{background:#191b23;color:#ccc;padding:12px;height:70vh;overflow:auto;font-size:13px;white-space:pre-wrap}
+    /*弹窗样式适配深色*/
+    .el-dialog__header,.el-dialog__body{background:#191b23;color:#eee}
+    .el-input__inner{background:#232630;border:#333642;color:#eee}
   </style>
 </head>
 <body>
-<div id="app" class="app-wrap">
-  <div class="left-bar">
-    <button class="new-task-btn" @click="showInput = true">+ 新建生成任务</button>
+<div id="app">
+  <!--左栏：新建+任务列表-->
+  <div class="left-side">
+    <button class="new-task-main" @click="showInput = true">+ 新建任务</button>
     <div class="task-list">
-      <div v-for="item in taskList" :key="item.id" class="task-item" :class="{active:curTaskId===item.id}" @click="switchTask(item)">
-        {{item.name}}
-        <div style="font-size:12px;color:#999">{{item.status}}</div>
+      <div v-for="item in taskList" :key="item.id" class="task-list-item" :class="{active:curTaskId===item.id}" @click="switchTask(item)">
+        <div class="task-name">{{item.name}}</div>
+        <div class="task-sub">{{item.status}}</div>
       </div>
     </div>
   </div>
 
-  <div class="mid-panel" v-if="curTask">
-    <div class="task-info">
-      <h3>{{curTask.name}}</h3>
-      <div>状态：{{curTask.status}}</div>
-      <div style="margin:6px 0">
-        <el-button type="primary" @click="getVideoInfo">刷新</el-button>
-        <el-button type="info" @click="openLog">查看完整日志</el-button>
+  <!--中栏：7步流水线进度-->
+  <div class="mid-wrap" v-if="curTask">
+    <div class="task-top-info">
+      <div class="task-title">{{curTask.name}}</div>
+      <div class="num-row">
+        <span>已耗时：{{costTime||"00:00"}}</span>
+        <span>当前步：{{curTask.step+1}}/{{stepList.length}}</span>
+        <span>分镜：{{curTask.shotNum||0}}</span>
+      </div>
+      <div class="opt-btn">
+        <el-button size="small" @click="getVideoInfo">刷新状态</el-button>
+        <el-button size="small" type="info" @click="openLog">查看运行日志</el-button>
       </div>
     </div>
-
-    <div class="step-list">
+    <div class="step-wrap">
       <div v-for="(s,i) in stepList" :key="i" class="step-item">
-        <div :class="curTask.step > i ? 'step-finish' : curTask.step == i ? 'step-running' : 'step-wait'"></div>
-        <div>
+        <div class="step-dot" :class="curTask.step > i ? 'step-finish' : curTask.step == i ? 'step-running' : 'step-wait'"></div>
+        <div class="step-text">
           <div>{{s.name}}</div>
-          <div style="font-size:12px;color:#999">{{s.desc}}</div>
+          <div class="step-desc">{{s.desc}}</div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="right-panel" v-if="curTask">
-    <el-tabs v-model="activeTab">
-      <el-tab-pane label="文案" name="text">
-        <div class="content-box">{{taskContent}}</div>
-      </el-tab-pane>
-      <el-tab-pane label="图片" name="image">
-        <div class="content-box img-grid">
-          <div class="img-item" v-for="img in imgList"><img :src="img" alt=""></div>
-        </div>
-      </el-tab-pane>
-      <el-tab-pane label="日志" name="log">
-        <div class="log-box">{{curTask.logList ? curTask.logList.join('\n') : '暂无日志'}}</div>
-      </el-tab-pane>
-    </el-tabs>
+  <!--右栏：多标签预览-->
+  <div class="right-wrap" v-if="curTask">
+    <div class="tab-header">
+      <div class="tab-item" :class="{active:activeTab==='text'}" @click="activeTab='text'">文案预审</div>
+      <div class="tab-item" :class="{active:activeTab==='image'}" @click="activeTab='image'">分镜画廊</div>
+      <div class="tab-item" :class="{active:activeTab==='log'}" @click="activeTab='log'">运行日志</div>
+    </div>
+    <div v-if="activeTab==='text'" class="content-text">{{taskContent}}</div>
+    <div v-if="activeTab==='image'" class="img-grid">
+      <div class="img-item" v-for="img in imgList" style="margin:6px"><img :src="img" width="180"></div>
+    </div>
+    <div v-if="activeTab==='log'" class="log-box">{{logText||"暂无日志"}}</div>
   </div>
 
-  <el-dialog v-model="showInput" title="导入文案" width="550px">
-    <el-button @click="selectFile">导入 TXT</el-button>
-    <input ref="fileRef" type="file" accept=".txt" hidden @change="readFile">
-    <el-input type="textarea" v-model="inputText" rows="10"></el-input>
+  <!--新建任务弹窗：粘贴+导入TXT【保留原有导入功能】-->
+  <el-dialog v-model="showInput" title="新建生成任务" width="540px">
+    <div style="margin-bottom:10px">
+      <el-button @click="selectFile" type="primary" size="small">📂导入本地TXT文档</el-button>
+      <input ref="fileRef" type="file" accept=".txt" hidden @change="readFile">
+    </div>
+    <el-input type="textarea" v-model="inputText" rows="10" placeholder="粘贴成片文案"></el-input>
     <template #footer>
-      <el-button @click="createTask">开始生成</el-button>
+      <el-button @click="showInput=false">取消</el-button>
+      <el-button type="primary" @click="createTask">确认创建</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="logShow" title="完整运行日志" width="750px">
+  <!--日志弹窗备用-->
+  <el-dialog v-model="logShow" title="全流程运行日志" width="720px">
     <div class="log-box">{{logText}}</div>
   </el-dialog>
 </div>
 
 <script>
-const { createApp, onMounted } = Vue
+const { createApp,onMounted,onUnmounted } = Vue
 createApp({
   setup() {
-    const taskList = Vue.ref([{ id: "t0", name: "演示任务", status: "就绪", step: -1, logList: [] }])
+    const taskList = Vue.ref([{ id: "t0", name: "演示任务", status: "就绪", shotNum: 0, step: -1 }])
     const curTaskId = Vue.ref("t0")
-    const curTask = Vue.computed(() => taskList.value.find(i => i.id === curTaskId.value) || {})
-    const activeTab = Vue.ref("log")
+    const curTask = Vue.computed(() => taskList.value.find(i => i.id === curTaskId.value) || {step:-1,logList:[]})
+    const activeTab = Vue.ref("text")
     const taskContent = Vue.ref("")
     const imgList = Vue.ref([])
     const showInput = Vue.ref(false)
@@ -93,72 +130,81 @@ createApp({
     const fileRef = Vue.ref(null)
     const logShow = Vue.ref(false)
     const logText = Vue.ref("")
+    let pollTimer = null
 
+    //7步骤和后端一一对应
     const stepList = [
-      { name: "1. 文案预审清洗", desc: "AI 优化文案" },
-      { name: "2. 纪录片口播改写", desc: "生成旁白" },
-      { name: "3. 智能拆分影视分镜", desc: "JSON 输出" },
-      { name: "4. 生成绘图关键词", desc: "万相提示词" },
-      { name: "5. 通义万相批量配图", desc: "生成图片" },
-      { name: "6. 火山引擎真人配音", desc: "生成音频" },
-      { name: "7. 视频合成+BGM", desc: "输出 MP4" }
+      { name:"文案预审",desc:"清理/修正原文语句" },
+      { name:"智能改写与封面生成",desc:"生成纪录片旁白正文" },
+      { name:"影视分镜分句",desc:"拆分台词+画面+时长JSON" },
+      { name:"生成绘图提示词",desc:"批量生成万相prompt" },
+      { name:"批量生图",desc:"通义万相在线绘图" },
+      { name:"TTS配音",desc:"火山女声批量生成音频" },
+      { name:"生成剪辑草稿",desc:"FFmpeg混音合成MP4" }
     ]
 
-    const selectFile = () => fileRef.value?.click()
-    const readFile = (e) => {
+    //导入txt
+    const selectFile = ()=>fileRef.value.click()
+    const readFile = (e)=>{
       const f = e.target.files[0]
       const reader = new FileReader()
-      reader.onload = ev => inputText.value = ev.target.result
-      reader.readAsText(f)
+      reader.onload=ev=>inputText.value=ev.target.result
+      reader.readAsText(f,"utf-8")
     }
 
-    const createTask = async () => {
-      if (!inputText.value) return alert("请输入文案")
-      const res = await fetch("/api/task", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: inputText.value, taskName: "新任务" })
+    //新建任务
+    const createTask = async ()=>{
+      if(!inputText.value.trim())return alert("文案不能为空")
+      const res=await fetch("/api/task",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({content:inputText.value.trim(),taskName:"新任务"})
       })
-      const d = await res.json()
-      taskList.value.push({ id: d.taskId, name: "新任务", status: "开始执行", step: 0, logList: [] })
-      curTaskId.value = d.taskId
-      showInput.value = false
-    }
-
-    const switchTask = (item) => {
-      curTaskId.value = item.id
+      const d=await res.json()
+      taskList.value.push({id:d.taskId,name:"新任务",status:"排队执行",step:0,shotNum:0})
+      curTaskId.value=d.taskId
+      showInput.value=false
+      inputText.value=""
       getVideoInfo()
     }
 
-    const getVideoInfo = async () => {
-      const res = await fetch(`/api/task?id=${curTaskId.value}`)
-      const d = await res.json()
-      taskContent.value = d.script || d.content
-      imgList.value = d.imgs || []
-      const t = taskList.value.find(x => x.id === curTaskId.value)
-      if (t) {
-        t.step = d.step
-        t.status = d.status
-        t.logList = d.logList || []
-        t.shotNum = d.shotNum
-      }
+    //切换任务
+    const switchTask = (item)=>{
+      curTaskId.value=item.id
+      getVideoInfo()
     }
 
-    const openLog = () => {
-      logText.value = (curTask.value.logList || []).join('\n')
-      logShow.value = true
+    //拉取任务+日志
+    const getVideoInfo = async ()=>{
+      try{
+        const res=await fetch(`/api/task?id=${curTaskId.value}`)
+        const d=await res.json()
+        taskContent.value=d.script||d.content||""
+        imgList.value=d.imgs||[]
+        const t=taskList.value.find(x=>x.id===curTaskId.value)
+        if(t){
+          t.step=d.step??0
+          t.status=d.status
+          t.shotNum=d.shotNum||0
+          t.logList=d.logList||[]
+        }
+      }catch(e){console.log(e)}
     }
 
-    onMounted(() => {
-      setInterval(() => {
-        if (curTaskId.value) getVideoInfo()
-      }, 2500)
+    //打开日志
+    const openLog=()=>{
+      logText.value=(curTask.value.logList||[]).join("\n")
+      logShow.value=true
+    }
+
+    //3秒自动轮询
+    onMounted(()=>{
+      pollTimer=setInterval(()=>curTaskId.value&&getVideoInfo(),3000)
     })
+    onUnmounted(()=>clearInterval(pollTimer))
 
     return {
-      taskList, curTaskId, curTask, activeTab, taskContent, imgList,
-      stepList, showInput, inputText, fileRef, selectFile, readFile,
-      createTask, switchTask, getVideoInfo, openLog, logShow, logText
+      taskList,curTaskId,curTask,activeTab,taskContent,imgList,stepList,
+      showInput,inputText,fileRef,selectFile,readFile,createTask,switchTask,getVideoInfo,openLog,logShow,logText
     }
   }
 }).use(ElementPlus).mount("#app")
