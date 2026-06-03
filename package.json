@@ -2,7 +2,7 @@
   "name": "storybound",
   "version": "1.0.0",
   "dependencies": {
-    "edge-tts": "^6.1.0",
-    "axios": "^1.6.0"
+    "edge-tts-node": "^1.1.1",
+    "axios": "^1.6.8"
   }
 }
