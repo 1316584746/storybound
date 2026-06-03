@@ -1,10 +1,21 @@
 {
-  "output": ".",
-  "build": {
-    "env": {}
-  },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/task.js" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/task.js"
+    },
+    {
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/:catchall(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "functions": {
+    "api/task.js": {
+      "runtime": "@vercel/node"
+    }
+  }
 }
