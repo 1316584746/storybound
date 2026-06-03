@@ -1,0 +1,14 @@
+{
+  "build": {
+    "env": {
+      "NODE_ENV": "production"
+    }
+  },
+  "routes": [
+    {"src":"/api/(.*)","dest":"/api/task.js"},
+    {"src":"/(.*)","dest":"/index.html"}
+  ],
+  "functions":{
+    "api/task.js":{"runtime":"@vercel/node"}
+  }
+}
