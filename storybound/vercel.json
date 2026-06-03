@@ -10,7 +10,11 @@
       "destination": "/api/task.js"
     },
     {
-      "source": "/:path*",
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/:any*",
       "destination": "/index.html"
     }
   ]
