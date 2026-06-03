@@ -1,0 +1,10 @@
+{
+  "output": ".",
+  "build": {
+    "env": {}
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/task.js" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
