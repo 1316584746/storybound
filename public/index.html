@@ -10,13 +10,17 @@
   <style>
     .dl-btn{background:#27AE60;padding:8px 16px;border:none;border-radius:5px;color:#fff;margin-top:10px;cursor:pointer}
     .cfg-row{margin:8px 0;font-size:13px;color:#ccc}
+    .step-finish{background:#52c41a;width:16px;height:16px;border-radius:50%}
+    .step-running{background:#faad14;width:16px;height:16px;border-radius:50%}
+    .step-wait{background:#999;width:16px;height:16px;border-radius:50%}
+    .step-item{display:flex;align-items:center;gap:12px;margin:10px 0}
+    .import-btn{background:#409eff;color:#fff;border:0;padding:8px 12px;border-radius:4px;cursor:pointer}
   </style>
 </head>
 <body>
 <div id="app" class="app-wrap">
-  <!--左栏任务列表-->
   <div class="left-bar">
-    <button class="new-task-btn" @click="openCreateTask">+ 新建生成任务</button>
+    <button class="new-task-btn" @click="showInput = true">+ 新建生成任务</button>
     <div class="cfg-row">
       <el-checkbox v-model="openBGM">开启背景音乐</el-checkbox>
     </div>
@@ -27,24 +31,24 @@
       </div>
     </div>
   </div>
-  <!--中栏7步进度-->
+
   <div class="mid-panel" v-if="curTask">
     <div class="task-info">
       <h3>{{curTask.name}}</h3>
       <div>分镜总数：{{curTask.shotNum||0}}｜{{curTask.status}}</div>
-      <button @click="getVideoInfo" style="margin-top:6px">刷新成片状态</button>
+      <button @click="getVideoInfo">刷新成片状态</button>
     </div>
     <div class="step-list">
-      <div v-for="step in stepList" :key="step.name" class="step-item">
-        <div class="step-icon" :class="step.tag"></div>
+      <div v-for="(s,i) in stepList" :key="i" class="step-item">
+        <div :class="curTask.step > i ? 'step-finish' : curTask.step == i ? 'step-running' : 'step-wait'"></div>
         <div>
-          <div>{{step.name}}</div>
-          <div style="font-size:12px;color:#999" v-if="step.desc">{{step.desc}}</div>
+          <div>{{s.name}}</div>
+          <div style="font-size:12px;color:#999">{{s.desc}}</div>
         </div>
       </div>
     </div>
   </div>
-  <!--右栏预览：文案/分镜/成片-->
+
   <div class="right-panel" v-if="curTask">
     <el-tabs v-model="activeTab">
       <el-tab-pane label="文案预览" name="text">
@@ -58,65 +62,88 @@
       <el-tab-pane label="成片视频" name="video">
         <div class="content-box">
           <div v-if="videoTip" style="color:#7ccd7c;margin-bottom:10px">{{videoTip}}</div>
-          <div v-if="!videoTip">视频生成中，等待全部步骤跑完</div>
-          <a v-if="videoTip&&videoTip.indexOf('完成')!=-1" href="#" @click="alert(videoTip)">
-            <button class="dl-btn">查看本地MP4路径</button>
-          </a>
+          <div v-if="!videoTip">视频生成中，请等待...</div>
         </div>
       </el-tab-pane>
     </el-tabs>
   </div>
+
+  <el-dialog v-model="showInput" title="输入文案" width="500px">
+    <el-button @click="selectFile">导入本地 TXT</el-button>
+    <input ref="fileRef" type="file" accept=".txt" hidden @change="readFile">
+    <el-input type="textarea" v-model="inputText" rows="8" placeholder="粘贴文案或导入TXT"></el-input>
+    <template #footer>
+      <el-button @click="createTask">确认生成</el-button>
+    </template>
+  </el-dialog>
 </div>
 
 <script>
 const { createApp } = Vue
 createApp({
-  setup(){
-    const taskList = Vue.ref([{id:"t0",name:"演示任务",status:"就绪",shotNum:0}])
+  setup() {
+    const taskList = Vue.ref([{ id: "t0", name: "演示任务", status: "就绪", shotNum: 0, step: -1 }])
     const curTaskId = Vue.ref("t0")
-    const curTask = Vue.computed(()=>taskList.value.find(i=>i.id===curTaskId.value))
+    const curTask = Vue.computed(() => taskList.value.find(i => i.id === curTaskId.value) || {})
     const activeTab = Vue.ref("text")
     const taskContent = Vue.ref("")
     const imgList = Vue.ref([])
     const videoTip = Vue.ref("")
     const openBGM = Vue.ref(true)
+    const showInput = Vue.ref(false)
+    const inputText = Vue.ref("")
+    const fileRef = Vue.ref(null)
 
-    const stepList = Vue.ref([
-      { name:"文案预审清洗", tag:"step-finish", desc:"通义千问优化原文" },
-      { name:"纪录片口播改写", tag:"step-finish", desc:"生成15-20min旁白稿" },
-      { name:"智能拆分影视分镜", tag:"step-finish", desc:"输出画面+台词+时长JSON" },
-      { name:"生成AI绘图关键词", tag:"step-running", desc:"适配通义万相参数" },
-      { name:"通义万相批量配图", tag:"step-wait", desc:"在线生成分镜画面" },
-      { name:"火山引擎真人配音", tag:"step-wait", desc:"纪录片女声旁白" },
-      { name:"FFmpeg合成+背景音乐", tag:"step-wait", desc:"自动混音输出MP4" }
-    ])
+    const stepList = [
+      { name: "文案预审清洗", desc: "AI 优化语句" },
+      { name: "纪录片口播改写", desc: "生成旁白稿" },
+      { name: "智能拆分影视分镜", desc: "分镜+台词+时长" },
+      { name: "生成AI绘图关键词", desc: "万相绘图提示词" },
+      { name: "通义万相批量配图", desc: "批量生成图片" },
+      { name: "火山引擎真人配音", desc: "生成音频" },
+      { name: "视频合成+BGM混音", desc: "合并成 MP4" }
+    ]
 
-    //新建任务
-    const openCreateTask = ()=>{
-      let raw = prompt("粘贴需要生成成片的完整文案：")
-      if(!raw)return
-      fetch("/api/task",{
-        method:"POST",
-        body:JSON.stringify({content:raw,taskName:"新生成任务"})
-      }).then(res=>res.json()).then(d=>{
-        taskList.value.push({id:d.taskId,name:"新生成任务",status:"排队中",shotNum:0})
+    const selectFile = () => fileRef.value?.click()
+    const readFile = (e) => {
+      const f = e.target.files[0]
+      if (!f) return
+      const reader = new FileReader()
+      reader.onload = ev => inputText.value = ev.target.result
+      reader.readAsText(f)
+    }
+
+    const createTask = () => {
+      if (!inputText.value) return alert("请输入文案")
+      fetch("/api/task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: inputText.value, taskName: "新任务" })
+      }).then(res => res.json()).then(d => {
+        taskList.value.push({ id: d.taskId, name: "新任务", status: "执行中", step: 0 })
+        showInput.value = false
       })
     }
-    //切换任务
-    const switchTask = (item)=>{
+
+    const switchTask = (item) => {
       curTaskId.value = item.id
       getVideoInfo()
     }
-    //刷新任务详情
-    const getVideoInfo = ()=>{
-      fetch(`/api/task?id=${curTaskId.value}`).then(r=>r.json()).then(d=>{
-        taskContent.value = d.script||d.content
-        imgList.value = d.imgs||[]
-        videoTip.value = d.downloadTip||""
+
+    const getVideoInfo = () => {
+      fetch(`/api/task?id=${curTaskId.value}`).then(r => r.json()).then(d => {
+        taskContent.value = d.script || d.content
+        imgList.value = d.imgs || []
+        videoTip.value = d.downloadTip || ""
+        const t = taskList.value.find(x => x.id === curTaskId.value)
+        if (t) { t.step = d.step; t.status = d.status; t.shotNum = d.shotNum }
       })
     }
 
-    return {taskList,curTaskId,curTask,activeTab,taskContent,imgList,videoTip,stepList,openBGM,openCreateTask,switchTask,getVideoInfo}
+    return {
+      taskList, curTaskId, curTask, activeTab, taskContent, imgList, videoTip, openBGM, stepList,
+      showInput, inputText, fileRef, selectFile, readFile, createTask, switchTask, getVideoInfo
+    }
   }
 }).use(ElementPlus).mount("#app")
 </script>
