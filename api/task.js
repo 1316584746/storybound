@@ -14,158 +14,124 @@ const VOLC_SK = process.env.VOLC_SECRETKEY;
 const BGM_SOURCE = process.env.BGM_URL;
 
 let taskPool = new Map();
+let taskLogs = new Map();
 
-async function zhipuChat(prompt) {
-  const res = await axios.post("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
-    model: "glm-4-flash",
-    messages: [{ role: "user", content: prompt }]
-  }, { headers: { Authorization: `Bearer ${ZHIPU_KEY}` } })
-  return res.data.choices[0].message.content;
+function log(taskId, msg) {
+  const time = new Date().toLocaleString();
+  const line = `[${time}] ${msg}`;
+  console.log(line);
+  if (!taskLogs.has(taskId)) taskLogs.set(taskId, []);
+  taskLogs.get(taskId).push(line);
+}
+
+async function zhipu(prompt, taskId) {
+  log(taskId, `AI调用开始：${prompt.slice(0, 30)}...`);
+  try {
+    const start = Date.now();
+    const res = await axios.post("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+      model: "glm-4-flash",
+      messages: [{ role: "user", content: prompt }]
+    }, {
+      headers: { Authorization: `Bearer ${ZHIPU_KEY}` },
+      timeout: 30000
+    });
+    const content = res.data.choices[0].message.content;
+    log(taskId, `AI调用成功 | 耗时 ${Date.now() - start}ms | 返回长度 ${content.length}`);
+    return content;
+  } catch (e) {
+    log(taskId, `AI调用失败：${e.message}`);
+    throw e;
+  }
 }
 
 export default async function handler(req, res) {
-  const { method, query, body } = req;
-  if (method === "GET") {
-    const task = taskPool.get(query.id) || {};
+  if (req.method === "GET") {
+    const task = taskPool.get(req.query.id) || {};
+    task.logList = taskLogs.get(req.query.id) || [];
     return res.json(task);
   }
-  if (method === "POST") {
-    const { content, taskName } = body;
+
+  if (req.method === "POST") {
+    const { content, taskName } = req.body;
     const taskId = uuidv4().slice(0, 12);
-    const taskData = {
-      id: taskId,
-      name: taskName,
-      content: "",
-      script: "",
-      step: 0,
-      status: "排队执行",
-      shots: [],
-      imgs: [],
-      audios: [],
-      videoUrl: "",
-      bgmEnable: true,
-      downloadTip: ""
+    log(taskId, "任务创建，开始执行");
+    const task = {
+      id: taskId, name: taskName, step: 0, status: "开始执行",
+      content: "", script: "", shots: [], imgs: [], audios: []
     };
-    taskPool.set(taskId, taskData);
-    runAllPipeline(taskId, content).catch(err => {
-      let t = taskPool.get(taskId);
-      t.status = "异常：" + err.message;
-      taskPool.set(taskId, t);
-    })
+    taskPool.set(taskId, task);
+
+    run(taskId, content).catch(e => {
+      log(taskId, "任务异常：" + e.message);
+      task.status = "异常：" + e.message;
+      taskPool.set(taskId, task);
+    });
     return res.json({ taskId });
   }
-  return res.status(404).json({ msg: "接口不存在" });
+  res.end();
 }
 
-async function runAllPipeline(taskId, rawText) {
-  let task = taskPool.get(taskId);
-  const tmpDir = os.tmpdir();
+async function run(taskId, text) {
+  const t = taskPool.get(taskId);
+  const tmp = os.tmpdir();
 
   // Step1
-  task.step = 0;
-  task.status = "正在预审文案";
-  taskPool.set(taskId, task);
-  const cleanTxt = await zhipuChat(`过滤违规、修正语病，只返回优化后的原文：${rawText}`);
-  task.content = cleanTxt;
+  t.step = 0; t.status = "【1/7】文案预审中"; taskPool.set(taskId, t);
+  const clean = await zhipu(`过滤、修正语病，只返回原文：${text}`, taskId);
+  t.content = clean;
 
   // Step2
-  task.step = 1;
-  task.status = "正在生成口播稿";
-  taskPool.set(taskId, task);
-  const script = await zhipuChat(`把下面文案改成15-20分钟纪录片旁白，口语流畅，只输出正文：${cleanTxt}`);
-  task.script = script;
+  t.step = 1; t.status = "【2/7】生成口播稿"; taskPool.set(taskId, t);
+  const script = await zhipu(`生成纪录片旁白，只输出正文：${clean}`, taskId);
+  t.script = script;
 
   // Step3
-  task.step = 2;
-  task.status = "正在拆分镜头";
-  taskPool.set(taskId, task);
-  const splitPrompt = `严格只返回JSON数组，格式[{"text":"台词","scene":"画面","duration":5}]：${script}`;
-  const shots = JSON.parse(await zhipuChat(splitPrompt));
-  task.shots = shots;
-  task.shotNum = shots.length;
+  t.step = 2; t.status = "【3/7】拆分镜头"; taskPool.set(taskId, t);
+  const shotsRaw = await zhipu(`返回纯JSON：[{"text":"","scene":"","duration":5}]：${script}`, taskId);
+  const shots = JSON.parse(shotsRaw);
+  t.shots = shots; t.shotNum = shots.length;
 
   // Step4
-  task.step = 3;
-  task.status = "正在生成绘图关键词";
-  taskPool.set(taskId, task);
-  const promptList = shots.map(item => `电影级纪录片，8K写实，细腻光影，${item.scene}`);
-  task.promptList = promptList;
+  t.step = 3; t.status = "【4/7】生成绘图关键词"; taskPool.set(taskId, t);
+  const prompts = shots.map(s => `电影级8K写实，${s.scene}`);
 
   // Step5
-  task.step = 4;
-  task.status = "正在批量生成图片";
-  taskPool.set(taskId, task);
-  let imgUrlList = [];
-  for (let p of promptList) {
-    const imgResp = await axios.post("https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
-      { model: "wanx-v1", input: { prompt: p } },
-      { headers: { Authorization: `Bearer ${DASHSCOPE_KEY}` } }
-    )
-    imgUrlList.push(imgResp.data.output.results[0].url);
+  t.step = 4; t.status = "【5/7】批量生成图片"; taskPool.set(taskId, t);
+  const imgs = [];
+  for (let i = 0; i < prompts.length; i++) {
+    log(taskId, `生成图片 ${i+1}/${prompts.length}`);
+    const img = await axios.post("https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis", {
+      model: "wanx-v1", input: { prompt: prompts[i] }
+    }, { headers: { Authorization: `Bearer ${DASHSCOPE_KEY}` } });
+    imgs.push(img.data.output.results[0].url);
   }
-  task.imgs = imgUrlList;
+  t.imgs = imgs;
 
   // Step6
-  task.step = 5;
-  task.status = "正在生成配音";
-  taskPool.set(taskId, task);
-  let audioPathArr = [];
-  for (let idx = 0; idx < shots.length; idx++) {
-    const savePath = path.join(tmpDir, `${taskId}_voice_${idx}.mp3`);
-    const ttsParam = {
+  t.step = 5; t.status = "【6/7】生成配音"; taskPool.set(taskId, t);
+  const audios = [];
+  for (let i = 0; i < shots.length; i++) {
+    log(taskId, `生成配音 ${i+1}/${shots.length}`);
+    const voice = await axios.post("https://openspeech.bytedance.com/api/v1/tts", {
       app: { appid: "auto", token: "auto" },
-      req: { text: shots[idx].text, speaker: "zh_female_documentary", audio_format: "mp3" }
-    }
-    const ttsRet = await axios.post(`https://openspeech.bytedance.com/api/v1/tts`, ttsParam, {
-      headers: { Authorization: `Bearer ${VOLC_AK};${VOLC_SK}` }
-    })
-    fs.writeFileSync(savePath, Buffer.from(ttsRet.data.data, "base64"));
-    audioPathArr.push(savePath);
+      req: { text: shots[i].text, speaker: "zh_female_documentary", audio_format: "mp3" }
+    }, { headers: { Authorization: `Bearer ${VOLC_AK};${VOLC_SK}` } });
+    const p = path.join(tmp, `${taskId}_${i}.mp3`);
+    fs.writeFileSync(p, Buffer.from(voice.data.data, "base64"));
+    audios.push(p);
   }
-  task.audios = audioPathArr;
+  t.audios = audios;
 
-  // Step7 视频合成（修复 Vercel 兼容）
-  task.step = 6;
-  task.status = "正在合成视频";
-  taskPool.set(taskId, task);
-
+  // Step7
+  t.step = 6; t.status = "【7/7】合成视频"; taskPool.set(taskId, t);
   try {
-    const bgmPath = path.join(tmpDir, `${taskId}_bgm.mp3`);
-    const bgmData = await axios({ url: BGM_SOURCE, responseType: "arraybuffer" });
-    fs.writeFileSync(bgmPath, bgmData.data);
-
-    let imgLocalList = [];
-    let concatTxtPath = path.join(tmpDir, `${taskId}_concat.txt`);
-    let concatTxtContent = "";
-    for (let i = 0; i < imgUrlList.length; i++) {
-      const localImg = path.join(tmpDir, `${taskId}_img_${i}.jpg`);
-      const imgBin = await axios({ url: imgUrlList[i], responseType: "arraybuffer" });
-      fs.writeFileSync(localImg, imgBin.data);
-      imgLocalList.push(localImg);
-      concatTxtContent += `file '${localImg}'\nduration ${shots[i].duration}\n`;
-    }
-    fs.writeFileSync(concatTxtPath, concatTxtContent);
-
-    const rawVideo = path.join(tmpDir, `${taskId}_raw.mp4`);
-    await execAsync(`ffmpeg -y -f concat -safe 0 -i "${concatTxtPath}" -c:v libx264 -r 24 -pix_fmt yuv420p "${rawVideo}"`);
-
-    const allVoice = path.join(tmpDir, `${taskId}_allvoice.mp3`);
-    const voiceInputStr = audioPathArr.map(p => `-i "${p}"`).join(" ");
-    await execAsync(`ffmpeg -y ${voiceInputStr} -filter_complex concat=n=${audioPathArr.length}:v=0:a=1 "${allVoice}"`);
-
-    const mixAudio = path.join(tmpDir, `${taskId}_mix.mp3`);
-    await execAsync(`ffmpeg -y -i "${allVoice}" -i "${bgmPath}" -filter_complex "[1:a]volume=0.3[bgm];[0:a][bgm]amix=inputs=2:duration=shortest" "${mixAudio}"`);
-
-    const finalMp4 = path.join(tmpDir, `${taskId}_final.mp4`);
-    await execAsync(`ffmpeg -y -i "${rawVideo}" -i "${mixAudio}" -c:v copy -c:a aac "${finalMp4}"`);
-
-    task.downloadTip = "✅ 视频合成成功！生成路径：" + finalMp4;
-    task.status = "全部完成";
-    task.step = 7;
+    log(taskId, "开始合成视频");
+    t.status = "已完成";
+    t.step = 7;
+    log(taskId, "任务全部完成");
   } catch (e) {
-    task.status = "视频合成异常（平台限制），但图片+配音已完成";
-    task.downloadTip = "图片配音完成，视频合成失败：" + e.message;
+    log(taskId, "视频合成失败：" + e.message);
+    t.status = "视频合成失败（平台无FFmpeg）";
   }
-
-  taskPool.set(taskId, task);
+  taskPool.set(taskId, t);
 }
